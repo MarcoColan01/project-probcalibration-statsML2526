@@ -11,10 +11,11 @@ from ucimlrepo import fetch_ucirepo
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "data"
 
-RANDOM_STATE = 42    
+RANDOM_STATE = 42     
 N_SAMPLES = 40_000    
-CAL_SIZE = 0.2        
+CAL_SIZE = 0.2      
 TEST_SIZE = 0.2
+SPLIT_NAMES = ["X_train", "X_cal", "X_test", "y_train", "y_cal", "y_test"]
 
 ADULT_NUM_COLS = ["age", "fnlwgt", "education-num", "capital-gain", "capital-loss",
                   "hours-per-week"]
@@ -30,8 +31,6 @@ COVTYPE_CAT_COLS = ["Wilderness_Area", "Soil_Type"]
 
 def _check_labels(name, y):
     y = np.asarray(y)
-    if not np.isin(y, [0, 1]).all():
-        raise RuntimeError(f"{name}: target is not encoded in {{0, 1}}")
     return y.astype(int)
 
 def load_higgs():
@@ -45,7 +44,6 @@ def load_higgs():
     df = pd.read_csv(path).dropna()   
     return df.drop(columns="class"), _check_labels("higgs", df["class"])
 
-
 def load_covertype():
     path = DATA_DIR / "covertype.csv.gz"
     if not path.exists():
@@ -58,8 +56,6 @@ def load_covertype():
     X = df[COVTYPE_NUM_COLS].copy()
     for cat in COVTYPE_CAT_COLS:   
         block = df.filter(regex=f"^{cat}_")
-        if not (block.sum(axis=1) == 1).all():
-            raise RuntimeError(f"covertype: {cat} columns are not a valid one-hot encoding")
         X[cat] = block.idxmax(axis=1).str.removeprefix(f"{cat}_")
     y = (df["Cover_Type"] == 2).astype(int)
     return X, _check_labels("covertype", y)
@@ -79,13 +75,10 @@ def load_adult():
     y = df["income"].str.rstrip(".").map({"<=50K": 0, ">50K": 1})
     return df[ADULT_NUM_COLS + ADULT_CAT_COLS], _check_labels("adult", y)
 
-DATASETS = {"higgs": load_higgs, "covertype": load_covertype, "adult": load_adult}
 
+DATASETS = {"higgs": load_higgs, "covertype": load_covertype, "adult": load_adult}
 def split_data(X, y, n_samples=N_SAMPLES, random_state=RANDOM_STATE):
-    if len(y) < n_samples:
-        raise RuntimeError(f"{len(y)} rows available, {n_samples} required")
-    if len(y) > n_samples:
-        X, _, y, _ = train_test_split(
+    X, _, y, _ = train_test_split(
             X, y, train_size=n_samples, stratify=y, random_state=random_state)
 
     holdout = CAL_SIZE + TEST_SIZE
@@ -113,9 +106,12 @@ def encode_and_scale(X_train, X_cal, X_test):
 
     return transform(X_train), transform(X_cal), transform(X_test)
 
+def save_splits(name, X_train, X_cal, X_test, y_train, y_cal, y_test):
+    arrays = (X_train, X_cal, X_test, y_train, y_cal, y_test)
+    np.savez_compressed(DATA_DIR / f"{name}_splits.npz", **dict(zip(SPLIT_NAMES, arrays)))
 
-def get_dataset(name, n_samples=N_SAMPLES):
-    X, y = DATASETS[name]()
-    X_train, X_cal, X_test, y_train, y_cal, y_test = split_data(X, y, n_samples)
-    X_train, X_cal, X_test = encode_and_scale(X_train, X_cal, X_test)
-    return X_train, X_cal, X_test, y_train, y_cal, y_test
+
+def load_splits(name):
+    path = DATA_DIR / f"{name}_splits.npz"
+    with np.load(path) as f:
+        return tuple(f[k] for k in SPLIT_NAMES)
