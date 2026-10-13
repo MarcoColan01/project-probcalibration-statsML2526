@@ -66,6 +66,7 @@ class IsotonicCalibrator(Calibrator):
         self.thresholds_ = np.array(lows)
         self.values_ = np.array(values)
         return self
+    
 
     def predict_proba(self, scores):
         idx = np.searchsorted(self.thresholds_, np.asarray(scores, dtype=float), side="right")-1

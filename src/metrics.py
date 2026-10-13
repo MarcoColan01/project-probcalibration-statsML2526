@@ -21,4 +21,17 @@ def evaluate(y,p,eps=EPS):
         "brier": brier_score(y,p),
         "clipped": int(np.sum((p < eps) | (p > 1 - eps))),
     }
-
+    
+def bin_index(p, n_bins=10):
+    return np.minimum((np.asarray(p, dtype=float) * n_bins).astype(int), n_bins - 1)
+    
+def reliability_bins(y,p, n_bins=10):
+    y,p = np.asarray(y), np.asarray(p, dtype=float)
+    idx = np.minimum((p * n_bins).astype(int), n_bins - 1)
+    counts =np.bincount(idx, minlength=n_bins)
+    keep = counts > 0
+    mean_pred = np.bincount(idx, weights=p, minlength=n_bins)[keep] / counts[keep]
+    frac_pos = np.bincount(idx, weights=y, minlength=n_bins)[keep]/counts[keep]
+    
+    return mean_pred, frac_pos, counts[keep]
+    
