@@ -19,6 +19,8 @@ report/*.run.xml
 report/*.bcf
 report/*.md
 report/Figures/
+report/*.pdf
+!report/main.pdf
 
 .DS_Store
 
