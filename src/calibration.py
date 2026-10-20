@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import numpy as np
+import warnings
 
 def _sigmoid(z):
     return np.exp(-np.logaddexp(0.0,-z))
@@ -40,6 +41,8 @@ class PlattScaling(Calibrator):
 
         self.n_iter_=iteration
         self.converged_ = bool(np.linalg.norm(gradient) < self.tol)
+        if not self.converged_:
+            warnings.warn(f"Platt scaling did not converge in {self.max_iter} iterations")
         self.A_ = A/sigma
         self.B_ = B-A*mu/sigma
         return self
@@ -52,22 +55,22 @@ class IsotonicCalibrator(Calibrator):
     def fit(self, scores, y):
         unique, inverse, counts = np.unique(np.asarray(scores, dtype=float), return_inverse=True, return_counts=True)
         means = np.bincount(inverse, weights=np.asarray(y,dtype=float))/counts
-        lows, values, weights= [], [], []
-        for low, value, weight in zip(unique, means, counts):
+        highs, values, weights= [], [], []
+        for high, value, weight in zip(unique, means, counts):
             while values and values[-1] >= value:
                 prev_value, prev_weight = values.pop(), weights.pop()
                 value = (prev_value*prev_weight + value*weight)/(prev_weight+weight)
                 weight = prev_weight+weight
-                low = lows.pop()
-            lows.append(low)
+                highs.pop()
+            highs.append(high)
             values.append(value)
             weights.append(weight)
 
-        self.thresholds_ = np.array(lows)
+        self.thresholds_ = np.array(highs)  
         self.values_ = np.array(values)
         return self
     
 
     def predict_proba(self, scores):
-        idx = np.searchsorted(self.thresholds_, np.asarray(scores, dtype=float), side="right")-1
-        return self.values_[np.clip(idx, 0, len(self.values_) -1)]
+        idx = np.searchsorted(self.thresholds_, np.asarray(scores, dtype=float), side="left")
+        return self.values_[np.minimum(idx, len(self.values_) - 1)]

@@ -10,20 +10,8 @@ def prediction_histogram(ax, p, color, n_bins=10):
     ax.set(xlim=(0, 1), xticks=np.linspace(0, 1, 6), xlabel="Predicted probability",
            ylabel="Count")
 
-
-def reliability_diagram(ax, y, p, color, label, n_bins=10, connect=True, curves=()):
-    mean_pred, frac_pos, _ = reliability_bins(y, p, n_bins)
-    ax.plot([0, 1], [0, 1], linestyle="--", color="grey", linewidth=1)
-    for x, f, c, curve_label in curves:
-        ax.plot(x, f, color=c, linewidth=1.5, label=curve_label)
-    ax.plot(mean_pred, frac_pos, marker="o", linestyle="-" if connect else "none",
-            color=color, markersize=4, label=label)
-    ticks = np.linspace(0, 1, 6)
-    ax.set(xlim=(0, 1), ylim=(0, 1), xticks=ticks, yticks=ticks, box_aspect=1,
-           xlabel="Mean predicted probability", ylabel="Fraction of positives")
-
 def calibration_size_curve(ax, sizes, series, uncalibrated, uncalibrated_color):
-    ax.axhline(uncalibrated, color=uncalibrated_color, linestyle="--", label="Uncalibrated")
+    ax.axhline(uncalibrated, color=uncalibrated_color, linestyle="-", label="Uncalibrated")
     for y, color, label in series:
         ax.plot(sizes, y, marker="o", markersize=3.5, color=color, label=label)
     ax.set_xscale("log")
