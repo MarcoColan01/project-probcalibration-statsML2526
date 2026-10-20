@@ -29,10 +29,6 @@ COVTYPE_NUM_COLS = [
 ]
 COVTYPE_CAT_COLS = ["Wilderness_Area", "Soil_Type"]
 
-def _check_labels(name, y):
-    y = np.asarray(y)
-    return y.astype(int)
-
 def load_higgs():
     path = DATA_DIR / "higgs.csv.gz"
     if not path.exists():
@@ -42,7 +38,7 @@ def load_higgs():
         raw.to_csv(path, index=False)
 
     df = pd.read_csv(path).dropna()   
-    return df.drop(columns="class"), _check_labels("higgs", df["class"])
+    return df.drop(columns="class"), df["class"].to_numpy(dtype=int)
 
 def load_covertype():
     path = DATA_DIR / "covertype.csv.gz"
@@ -58,7 +54,7 @@ def load_covertype():
         block = df.filter(regex=f"^{cat}_")
         X[cat] = block.idxmax(axis=1).str.removeprefix(f"{cat}_")
     y = (df["Cover_Type"] == 2).astype(int)
-    return X, _check_labels("covertype", y)
+    return X, y.to_numpy(dtype=int)
 
 
 def load_adult():
@@ -73,7 +69,7 @@ def load_adult():
     df[str_cols] = df[str_cols].apply(lambda s: s.str.strip())
     df = df.replace("?", np.nan).dropna()
     y = df["income"].str.rstrip(".").map({"<=50K": 0, ">50K": 1})
-    return df[ADULT_NUM_COLS + ADULT_CAT_COLS], _check_labels("adult", y)
+    return df[ADULT_NUM_COLS + ADULT_CAT_COLS], y.to_numpy(dtype=int)
 
 
 DATASETS = {"higgs": load_higgs, "covertype": load_covertype, "adult": load_adult}
