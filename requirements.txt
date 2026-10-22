@@ -5,3 +5,4 @@ scikit-learn>=1.4
 jupyterlab>=4.0
 ipykernel>=6.29
 seaborn>=0.13
+ucimlrepo>=0.0.7
