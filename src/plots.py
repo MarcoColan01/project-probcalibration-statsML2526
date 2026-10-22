@@ -11,7 +11,7 @@ def prediction_histogram(ax, p, color, n_bins=10):
            ylabel="Count")
 
 def calibration_size_curve(ax, sizes, series, uncalibrated, uncalibrated_color, uncalibrated_label="Uncalibrated"):
-    ax.axhline(uncalibrated, color=uncalibrated_color, linestyle="--", label=uncalibrated_label)
+    ax.axhline(uncalibrated, color=uncalibrated_color, linestyle="-", label=uncalibrated_label)
     for y, color, label in series:
         ax.plot(sizes, y, marker="o", markersize=3.5, color=color, label=label)
     ax.set_xscale("log")
