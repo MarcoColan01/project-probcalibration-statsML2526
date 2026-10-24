@@ -51,7 +51,19 @@
 %\usepackage[style=chicago-authordate, backend=biber]{biblatex}
 %\addbibresource{references.bib}
 
+\usepackage{graphicx}
+
 \usepackage[colorlinks=true, linkcolor=black, citecolor=black, urlcolor=black]{hyperref}
+
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{comment}
+
+\ifdefined\theorem\else\newtheorem{theorem}{Theorem}\fi
+\ifdefined\proposition\else\newtheorem{proposition}{Proposition}\fi
+\ifdefined\definition\else\newtheorem{definition}{Definition}\fi
+
+\providecommand{\toprule}{\hline}\providecommand{\midrule}{\hline}\providecommand{\bottomrule}{\hline}
 
 \newcommand{\papertitle}{Calibration of Probabilities}
 
@@ -68,12 +80,213 @@
 \maketitle
 
 \begin{abstract}
-    
+    This study evaluates and improves the calibration of the probabilities predicted by Logistic Regression and Random Forest, following the experimental methodology of Niculescu-Mizil and Caruana~\cite{niculescu2005predicting}. Both models are trained on three binary classification datasets that differ in label noise, feature types and class balance (HIGGS, Covertype and Adult), and their predictions are post-processed with Platt scaling and isotonic regression, implemented from scratch and fitted on an independent calibration set. Calibration is assessed with reliability diagrams and prediction histograms, and quantified with accuracy, log-loss, Brier score and expected calibration error (ECE). The experiments show that Logistic Regression is well calibrated where the linear model fits the data and only mildly miscalibrated elsewhere, while Random Forest exhibits the sigmoid-shaped under-confidence described in the paper, strongest on the low-noise Covertype dataset.  Before calibration, Logistic Regression gives the best-calibrated probabilities on all datasets; after calibration, Random Forest becomes equally well calibrated on HIGGS and Covertype, where it gives the best probabilities, while Logistic Regression remains the best model on Adult. Isotonic regression corrects every observed distortion when enough calibration data is available, whereas Platt scaling is effective on sigmoid-shaped distortions but degrades well-calibrated models whose predictions concentrate near $0$ and $1$. Calibration leaves the accuracy essentially unchanged, and a learning-curve analysis confirms that Platt scaling needs only a few hundred calibration examples, while isotonic regression needs thousands.
 \end{abstract}
 
-\section{Introduction}\label{sec:introduction}
+\section{Theoretical Background}\label{sec:theory}
+\subsection{Supervised Learning and Surrogate Losses}\label{sec:surrogate}
+Supervised learning aims to learn a predictor $h : X \to Y$ mapping an input instance $x \in X$ to a target label $y \in Y$, assuming that the examples $(x, y)$ are drawn independently from an unknown distribution $D$~\cite{cesabianchi2026notes}. Given a non-negative loss function $\ell(y, \hat{y})$, the goal is to minimize the \textbf{statistical risk} $\ell_D(h) = \mathbb{E}[\ell(Y, h(X))]$. The lowest possible risk, the \textbf{Bayes risk}, is attained by the \textbf{Bayes optimal predictor} $f^*$, which minimizes the expected loss conditioned on each $x$~\cite{cesabianchi2026notes}.
 
+In binary classification with $Y = \{-1, +1\}$, performance is naturally measured by the \textbf{zero-one loss} $\mathbb{I}\{\hat{y} \neq y\}$, whose risk is the probability of a mistake. Denoting by $\eta(x) = \mathbb{P}(Y = +1 \mid X = x)$ the posterior probability of the positive class, the Bayes optimal classifier is:
+\begin{equation}
+  f^*(x) = \begin{cases}
+    +1 \ \ \  \text{ if } \  \eta(x) < 1/2 \\
+    -1 \ \ \  \text{ if } \ \eta(x) \ge 1/2
+  \end{cases} 
+\end{equation}
+ 
+Since $D$ is unknown, algorithms rely on a training set $S$ of $m$ examples and apply \textbf{Empirical Risk Minimization (ERM)}, selecting from a hypothesis class $H$ the predictor with the smallest training error $\frac{1}{m}\sum_{t=1}^m \ell(y_t, h(x_t))$. With the zero-one loss, however, ERM is computationally intractable: the loss is non-convex with zero gradient almost everywhere, and already for linear predictors the problem is equivalent to the NP-hard \textsc{MinDisagreement} problem~\cite{cesabianchi2026notes}. Algorithms therefore learn a real-valued scoring function $g : X \to \mathbb{R}$ by minimizing a convex \textbf{surrogate loss} that upper-bounds the zero-one loss, such as the hinge, exponential, squared or logistic loss. 
+
+A surrogate loss is \textbf{consistent} if the sign of its pointwise minimizer $g^*(x)$ coincides with the Bayes classifier $f^*(x)$~\cite{cesabianchi2026notes}. Consistency guarantees the recovery of the optimal decision boundary $\eta(x) = 1/2$, but it does not ensure that the scores $g(x)$ are reliable estimates of $\eta(x)$ away from it~\cite{niculescu2005predicting, cesabianchi2026notes}.
+
+\subsection{The Need for Probability Calibration}\label{sec:need}
+In risk-sensitive applications, predicting the correct class is not enough: decision-makers need reliable estimates of the posterior probability $\eta(x)$ to quantify uncertainty~\cite{niculescu2005predicting}. 
+
+A probabilistic classifier $\hat{p} : X \to [0, 1]$ is \textbf{well calibrated} if, among the examples that receive prediction $p$, the probability of the positive class is exactly $p$:
+\begin{equation}\label{eq:calibration}
+    \mathbb{P}\big(Y = 1 \;\big|\; \hat{p}(X) = p\big) = p, \qquad \forall p \in [0, 1].
+\end{equation}
+Whether a classifier produces calibrated probabilities depends on the loss it minimizes and on its hypothesis class:
+\begin{itemize}
+    \item \textbf{Logistic Regression:} the pointwise minimizer of the logistic risk is the log-odds ratio $g^*(x) = \ln\frac{\eta(x)}{1 - \eta(x)}$, so that $\sigma(g^*(x)) = \eta(x)$, where $\sigma(z) = 1/(1 + e^{-z})$ is the logistic function~\cite{cesabianchi2026notes}. Logistic Regression, which fits a linear score $g(x) = w^\top x + b$ by minimizing this loss, therefore directly targets $\eta(x)$ and is naturally well calibrated~\cite{niculescu2005predicting}, unless the linear model is strongly misspecified.
+    \item \textbf{Random Forests:} this ensemble method takes a majority vote over randomized decision trees~\cite{cesabianchi2026notes}; scikit-learn instead averages the class frequencies in the leaves reached by $x$~\cite{pedregosa2011scikit}. Bagging reduces the variance of the ensemble, but random feature subsampling increases that of the individual trees. Because tree predictions are bounded in $[0, 1]$, this variance is \textit{one-sided} near the extremes: predicting $0$ (or $1$) requires all trees to agree, and the noise of a few trees pulls the average toward $0.5$, inducing a sigmoid-shaped and under-confident distortion~\cite{niculescu2005predicting}.
+\end{itemize}
+
+\subsection{Calibration Methods and Evaluation Metrics}\label{sec:methods}
+Post-hoc calibration learns a monotone map $m$ that transforms the outputs $f_i = f(x_i)$ of a trained model into calibrated probabilities $m(f_i)$. To avoid an optimistic bias, $m$ is fitted on an independent \textbf{calibration set} $S_{\mathrm{cal}} = \{(f_i, y_i)\}_{i=1}^{n}$, with $y_i \in \{0, 1\}$, disjoint from the training set~\cite{niculescu2005predicting}.
+ 
+\paragraph{Platt scaling.}
+Originally proposed for SVMs, Platt scaling passes the output of the model through a sigmoid~\cite{niculescu2005predicting}:
+\begin{equation}\label{eq:platt}
+    m(f_i) = \frac{1}{1 + \exp(A f_i + B)},
+\end{equation}
+whose parameters $A, B \in \mathbb{R}$ are fitted by maximum likelihood (minimizing the cross-entropy on $S_{\mathrm{cal}}$). To reduce overfitting, the binary labels are replaced by the smoothed targets $y_+ = \frac{N_+ + 1}{N_+ + 2}$ and $y_- = \frac{1}{N_- + 2}$, where $N_+$ and $N_-$ are the numbers of positive and negative examples. With only two parameters, Platt scaling needs little data, but it can only correct sigmoid-shaped distortions.
+ 
+\paragraph{Isotonic regression.}
+This non-parametric method only requires $m$ to be non-decreasing, and fits it by minimizing the squared error:
+\begin{equation}
+  \sum_i (y_i - m(f_i))^2
+\end{equation}
+over all such functions~\cite{niculescu2005predicting}. The \textbf{Pair-Adjacent Violators (PAV)} algorithm then computes the solution by sorting $S_{\mathrm{cal}}$ by $f_i$ and repeatedly merging adjacent blocks that violate monotonicity into a single block with their weighted mean, resulting in a step function. Isotonic regression can correct any monotone distortion, but its many degrees of freedom make it prone to overfitting on small calibration sets, and a block that contains only negative (or positive) examples outputs a probability of exactly $0$ (or $1$).
+
+\paragraph{Evaluation Metrics and Visual Diagnostics.}
+Calibration is visualized with \textbf{reliability diagrams}~\cite{niculescu2005predicting}: the predictions are divided into ten equal-width bins, and the mean prediction $\bar{p}_k$ of each bin is plotted against its fraction of positives $\bar{y}_k$. A well-calibrated model lies on the diagonal, while a histogram of the predictions shows how many examples support each point. On a test set of $n$ examples, the quality of the probabilities is measured by:
+\begin{itemize}
+    \item \textbf{Log-loss =} $-\frac{1}{n}\sum_{t} \big[y_t \ln \hat{p}_t + (1 - y_t) \ln(1 - \hat{p}_t)\big]$, which may take arbitrarily high values and thus strongly penalizes confident mistakes~\cite{cesabianchi2026notes};
+    \item \textbf{Brier score = } $\frac{1}{n}\sum_{t} (\hat{p}_t - y_t)^2$, the squared loss of the predicted probabilities;
+    \item \textbf{Expected Calibration Error (ECE)}~\cite{naeini2015obtaining, pavlovic2025understanding}, computed like the reliability diagrams on the probability of the positive class, measures the distance of the diagram from the diagonal, weighted by the number $n_k$ of predictions in each bin,
+    \begin{equation}\label{eq:ece}
+        \mathrm{ECE} = \sum_{k=1}^{10} \frac{n_k}{n}\,\big|\bar{y}_k - \bar{p}_k\big|.
+    \end{equation}
+\end{itemize}
+
+Log-loss and Brier score are both minimized in expectation by $\hat{p}(x) = \eta(x)$~\cite{cesabianchi2026notes}, but they reward calibration together with the ability of the model to separate the classes. ECE measures calibration alone: a constant predictor equal to the rate of positives has an ECE close to $0$ while being useless, so ECE complements the two scores rather than replacing them~\cite{pavlovic2025understanding}. Its value also depends on the binning~\cite{pavlovic2025understanding}; here it uses the same ten equal-width bins as the reliability diagrams. Finally, the \textbf{accuracy} of the thresholded predictions $\mathbb{I}\{\hat{p}_t \ge 0.5\}$ shows the effect of calibration on the predicted labels.
+
+\subsection{Objectives of This Work}\label{sec:objectives}
+This work evaluates and improves the calibration of \textbf{Logistic Regression} and \textbf{Random Forests} on three real-world binary classification datasets (HIGGS, Covertype and Adult). Following the experimental paradigm of~\cite{niculescu2005predicting}, \textbf{Platt scaling} and \textbf{isotonic regression} are implemented from scratch and fitted on an independent calibration set, and the models are compared before and after calibration through reliability diagrams, prediction histograms, accuracy, log-loss, Brier score and ECE. The analysis focuses on the causes of the observed miscalibration, on the different behavior of the two calibrators and on the amount of calibration data that each of them needs.
+
+
+\section{Datasets}\label{sec:datasets}
+The three datasets were chosen to differentiate the behavior of the two models and of the two calibration methods in three distinct scenarios: one imbalanced and two balanced, the latter made difficult by label noise and by the heterogeneity of the features, respectively.
+\begin{itemize}
+    \item \textbf{HIGGS}~\cite{baldi2014searching}: 98,049 simulated particle collisions from OpenML, where collisions producing a Higgs boson (52.9\% of the examples) must be separated from background processes using 28 numerical features, 21 kinematic ones measured by the detector and 7 derived from them. It is the \textbf{balanced and high-noise} scenario: the classes overlap heavily, so $\eta(x)$ stays far from $0$ and $1$ for most examples, and the predictions of both models are expected to concentrate in the middle of the interval, where the reliability diagrams are most populated. The signal lies in non-linear relations that a linear model cannot capture.
+    \item \textbf{Covertype}~\cite{blackard1998covertype}: 581,012 cells of $30 \times 30$\,m of a Colorado forest from scikit-learn, binarized as Lodgepole Pine (48.8\% of the examples) versus the other cover types. The 10 numerical cartographic features have different units and ranges, while the 44 binary columns encoding wilderness area and soil type are merged back into two categorical variables (53 features after encoding). It is the \textbf{balanced and heterogeneous} scenario: the classes are well separated, but the heterogeneity of the features makes Logistic Regression misspecified, since the most informative one, elevation, has a non-monotone relation with the target, and Random Forest draws the candidate features of each split mostly among sparse one-hot columns. With low noise, many examples have $\eta(x)$ close to $0$ or $1$, where the averaging of Random Forest is expected to distort the predictions most.
+    \item \textbf{Adult}~\cite{becker1996adult}: 45,222 records of the 1994 US Census from UCI, the task is to predict whether a person earns more than \$50K per year from 6 numerical and 8 categorical features (104 after encoding, as in the ADULT problem of the paper~\cite{niculescu2005predicting}). It is the \textbf{imbalanced} scenario, with only 24.8\% of positives. The imbalance changes the reference values of the metrics, places about half of the predictions near $0$ and halves the positives available to the calibrators.
+\end{itemize}
+
+\paragraph{Preprocessing and Splits.} 
+Each dataset is subsampled randomly to 40,000 rows, so that all calibration sets have the same size, and split into a \textbf{training} (60\%), a \textbf{calibration} (20\%) and a \textbf{test set} (20\%), stratified by class. The training set is used only to fit the models, the calibration set only to fit the calibrators and the test set only for the final evaluation. Categorical features are one-hot encoded and numerical features standardized with categories and statistics learned on the training set only to avoid data leakage. Standardization is needed by the L2 penalty of Logistic Regression, which treats all coefficients alike, but does not affect Random Forest. 
+
+\section{Methodology and Implementation}\label{sec:method}
+The pipeline is the same for every dataset and model: the model is trained on the training set, its predicted probabilities on the calibration and test sets are computed once, the two calibrators are fitted on the calibration set, and the uncalibrated and calibrated predictions are evaluated on the test set. scikit-learn~\cite{pedregosa2011scikit} is used only for the two models, the stratified splits and the standardization; Platt scaling, isotonic regression, the metrics and the reliability diagrams are implemented from scratch with NumPy.
+
+
+\subsection{Trained Models and Hyperparameters Choice}\label{sec:models}
+Both models are used with the \textbf{default hyperparameters of scikit-learn}, without tuning, so that the same configuration is compared across the three datasets and the differences in calibration reflect the data rather than the hyperparameters. Tuning on a probabilistic criterion, such as the validation log-loss, would also mix the effect of model selection with that of the calibrators.
+\begin{itemize}
+  \item \textbf{Logistic Regression:} has been used with L2 penalty with $C=1$ and an unpenalized intercept, fitted with L-BFGS. The iteration limit is raised from 100 to 1000 so that the solver can reach the optimum; it converges in 17, 93 and 82 iterations on HIGGS, Covertype and Adult respectively.
+  \item \textbf{Random Forest:} has been used with trees grown until their leaves are pure on bootstrap samples, with $\sqrt{d}$ candidate features per split and Gini impurity as splitting criterion. The number of trees is set to $T=101$ instead of the default 100: since every fully grown tree votes $0$ or $1$, the forest predicts multiples of $1/T$, and an odd $T$ avoids ties at $0.5$~\cite{cesabianchi2026notes}. Wherever all trees agree, the forest outputs exactly $0$ or $1$.
+\end{itemize}
+
+\subsection{Calibration Methods}\label{sec:calibrators}
+Both calibrators receive the predicted probability $\hat{p}(x) \in [0, 1]$ of each model. 
+\begin{itemize}
+  \item \textbf{Platt scaling} minimizes the cross-entropy between the sigmoid~\eqref{eq:platt} and the smoothed targets by full-batch gradient descent. The input is standardized internally, which makes a fixed step size of $1$ stable. The iterations start from $A = 0$ and $B = \ln\frac{N_- + 1}{N_+ + 1}$, as in Platt's algorithm, and stop when the norm of the gradient falls below $10^{-6}$. Since the problem is convex, the fit reaches the global optimum.
+  \item \textbf{Isotonic regression} implements PAV with a stack of blocks, after pooling tied predictions into a single weighted point. A new prediction $f$ takes the value of the block $(f_i, f_j]$ that contains it, which reproduces a step function.
+\end{itemize}
+
+\subsection{Evaluation Protocol}\label{sec:protocol}
+Accuracy, log-loss, Brier score and ECE are computed on the test set, together with those of a constant predictor equal to the rate of positives of the training set, used as a reference. Reliability diagrams, histograms and ECE use the same ten equal-width bins.
+
+To study how much data each calibrator needs, as in the learning-curve analysis of ~\cite{niculescu2005predicting}, the calibrators are also fitted on subsets of the calibration set whose size doubles from 32 to 4,096 examples, and on the whole set, and evaluated on the same test set; the models are not retrained. The subsets are stratified and nested, and they are drawn once with the fixed seed, so the curves are noisy at the smallest sizes.
+
+
+\section{Analysis of Results}\label{sec:results}
+\subsection{Calibration Curves Before and After Correction}\label{sec:curves}
+Figures~\ref{fig:rel_higgs}--\ref{fig:rel_adult} show the reliability diagrams of the test set before and after calibration, with the histograms of the predicted probabilities below them. Figure~\ref{fig:maps} shows the calibration maps fitted on the calibration set, together with the uncalibrated reliability points of the test set, which represent the ideal correction.
+
+\begin{figure}[!b]
+  \centering
+  \includegraphics[width=\textwidth]{reliability_higgs_side_by_side.pdf}
+  \caption{HIGGS: reliability diagrams of Logistic Regression (left) and Random Forest (right) before and after calibration, with the histograms of the predicted probabilities below them.}
+  \label{fig:rel_higgs}
+\end{figure}
+
+On \textbf{HIGGS} (Figure~\ref{fig:rel_higgs}), the high label noise confines most predictions of both models to the central region, between $0.3$ and $0.7$. The histogram of Logistic Regression is narrow, with 80\% of the predictions in this region, where the curve stays close to the diagonal; the largest deviations lie in the sparsely populated outer bins, where the predictions are slightly too extreme. Platt scaling pulls these predictions toward the center, almost emptying the outer bins, so that the end points of its curve rest on very few predictions, while the rest of the curve hardly changes. Isotonic regression concentrates the predictions on a few dozen values, producing an irregular histogram, and its few predictions of exactly $0$ and $1$ form the two end points of the curve. 
+
+The histogram of Random Forest is wider, but with almost no predictions in the extreme bins, and its curve has the sigmoidal shape described in the paper, below the diagonal under $0.5$ and above it over $0.5$: the forest is \textbf{under-confident}, as its predictions are pushed toward the middle of the interval. Both calibrators move them outward, which straightens the curve and spreads the histogram: it becomes almost flat between $0.1$ and $0.9$ after Platt scaling, and similarly spread but irregular after isotonic regression. 
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\textwidth]{reliability_covertype_side_by_side.pdf}
+  \caption{Covertype: reliability diagrams of Logistic Regression (left) and Random Forest (right) before and after calibration, with the histograms of the predicted probabilities below them.}
+  \label{fig:rel_covertype}
+\end{figure}
+
+On \textbf{Covertype} (Figure~\ref{fig:rel_covertype}), the Logistic Regression predictions cover the whole interval almost uniformly, and the curve stays close to the diagonal with small oscillations, as the predictions between $0.2$ and $0.7$ are slightly too close to $0.5$. Platt scaling, steeper than the diagonal in the middle, moves part of them toward $0.1$--$0.2$ and $0.8$--$0.9$, where the histogram grows, while isotonic regression corrects them with its steps, making the histogram coarser; both reduce the oscillations of the curve.
+
+The Random Forest shows the strongest distortion of all experiments: its histogram is already U-shaped, with 35\% of the predictions in the two extreme bins, but predictions around $0.25$ are positive in only 11\% of the cases, and those around $0.75$ in 85\%, so they should be even more extreme. After calibration the predictions move toward the extremes, thinning out the middle of the histogram, and about 60\% of them fall in the two extreme bins, as the paper observes for sigmoid-shaped distortions. Platt scaling, however, overshoots in the lower half of the interval: the few predictions left there are positive more often than predicted, and the calibrated curve lies above the diagonal, while isotonic regression follows the diagonal closely.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\textwidth]{reliability_adult_side_by_side.pdf}
+  \caption{Adult: reliability diagrams of Logistic Regression (left) and Random Forest (right) before and after calibration, with the histograms of the predicted probabilities below them.}
+  \label{fig:rel_adult}
+\end{figure}
+
+On \textbf{Adult} (Figure~\ref{fig:rel_adult}), about half of the predictions of both models fall below $0.1$, as expected with 25\% of positives, and the rest form a long tail toward $1$. Logistic Regression is well calibrated over the whole range, and isotonic regression leaves its curve unchanged, only making the histogram coarser. Platt scaling, instead, distorts it: its sigmoid, steeper than the diagonal in the middle, lowers the predictions between $0.1$ and $0.4$ and raises those between $0.6$ and $0.9$, moving mass from the middle of the histogram toward the ends. The moved predictions become too extreme, and the curve takes an inverted S shape, above the diagonal between $0.1$ and $0.6$ and below it between $0.6$ and $0.9$.
+
+The histogram of Random Forest is similar, but 23\% of its predictions are exactly $0$ or $1$, where all trees agree. Its curve lies slightly above the diagonal below $0.3$ and slightly below it above: the predictions are slightly too extreme, a mild \textbf{overconfidence}. Platt scaling removes the predictions of exactly $0$ and $1$ but, as for Logistic Regression, moves mass from the middle of the histogram toward the ends, which amplifies the overconfidence, while isotonic regression keeps the shape of the histogram, without predictions of exactly $0$ or $1$, and brings the curve closer to the diagonal.
+
+\begin{figure}[!b]
+  \centering
+  \includegraphics[width=0.85\textwidth]{calibration_maps_LR.pdf}\\[2pt]
+  \includegraphics[width=0.85\textwidth]{calibration_maps_RF.pdf}
+  \caption{Calibration maps fitted on the calibration set for Logistic Regression (top) and Random Forest (bottom), against the uncalibrated probability. The points are the uncalibrated reliability diagram of the test set, i.e., the ideal correction; the dashed line is the identity.}
+  \label{fig:maps}
+\end{figure}
+
+The calibration maps in Figure~\ref{fig:maps} explain these differences. For Logistic Regression, the Platt sigmoid stays close to the diagonal only in the middle of the interval: a sigmoid of the probability cannot represent the identity, so it bends away from it near $0$ and $1$. The effect is strongest on Adult, where the sigmoid ranges only from $0.04$ to $0.96$ and is visibly steeper than the diagonal in the middle. The isotonic steps oscillate around the diagonal, following the sampling noise of the calibration set. For Random Forest, both maps are steeper than the diagonal and follow the uncalibrated points on HIGGS. On Covertype the sigmoid lies below the points between $0.3$ and $0.5$, which explains the overshoot of Platt scaling, while on Adult it crosses them, and the isotonic steps follow them more closely.
+
+\subsection{Quantitative Analysis of Metrics}\label{sec:metrics}
+Figure~\ref{fig:test_metrics} reports the test metrics of each model before and after calibration, next to those of the constant predictor.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=0.8\textwidth]{test_metrics.pdf}
+  \caption{Test log-loss, Brier score, ECE and accuracy of each model before and after calibration.}
+  \label{fig:test_metrics}
+\end{figure}
+
+Calibration leaves the \textbf{accuracy} essentially unchanged, with variations of at most $0.002$. Both calibrators are monotone maps, so they preserve the order of the predictions and can change the predicted class only of the few examples whose probability crosses $0.5$. The differences between the models are much larger: Random Forest is clearly more accurate than Logistic Regression on HIGGS and Covertype, where the signal is non-linear ($0.873$ against $0.758$ on Covertype), while on Adult the two models are equivalent.
+
+The same holds for \textbf{log-loss} and \textbf{Brier score}: in Figure~\ref{fig:test_metrics} the effect of calibration is small compared with the differences between models and datasets, because both scores also reward the separation of the classes, which a monotone map cannot improve. The effect of calibration is instead clearly visible on the \textbf{ECE}. For the Random Forest on HIGGS and Covertype, both calibrators reduce the ECE by more than half (on Covertype from $0.069$ to $0.018$ with Platt scaling and $0.010$ with isotonic regression), and the Brier score decreases accordingly, by up to 6\%. For Logistic Regression, the ECE reveals a mild miscalibration on HIGGS and Covertype, which both calibrators reduce, while on Adult Logistic Regression is already well calibrated and only Platt scaling changes it appreciably, for the worse: the ECE grows from $0.008$ to $0.043$ and the Brier score from from $0.103$ to $0.105$. On the Random Forest of Adult, Platt scaling worsens both ECE and Brier score as well, while isotonic regression improves the ECE and leaves the Brier score unchanged. As expected, the constant predictor has an ECE close to $0$ but the worst log-loss and Brier score, so a calibrated predictor is not necessarily a useful one.
+
+The two scores do not always agree. Isotonic regression improves the Brier score of Logistic Regression on HIGGS but worsens its log-loss, and on the Random Forest of Covertype it gives the best Brier score but a worse log-loss than Platt scaling ($0.314$ against $0.298$). In both cases the cause is the predictions of exactly $0$ and $1$ produced by isotonic regression: a single mistake among them costs at most $1$ in the Brier score, but an extremely large value in log-loss, which is therefore dominated by a handful of confident errors. 
+
+Comparing the two models, Logistic Regression gives the best-calibrated probabilities before calibration on all datasets, with the lowest ECE, while Random Forest already gives the best probabilities on HIGGS and Covertype, with the lowest log-loss and Brier score, thanks to its better separation of the classes. After calibration, Random Forest becomes as well calibrated as Logistic Regression on these two datasets and remains the best model there, while on Adult Logistic Regression stays slightly better calibrated and gives the best probabilities. As in the paper, calibration thus brings the models to a similar calibration, but it cannot compensate for a worse separation of the classes~\cite{niculescu2005predicting}.
+ 
+\subsection{Discussion of Miscalibration}\label{sec:miscalibration}
+Comparing the reliability diagrams across datasets reveals three distinct behaviors.
+
+\paragraph{Under-confidence of Random Forest.} 
+On HIGGS and Covertype, Random Forest reproduces the behavior described in the paper, whose ``predicted values are slightly pushed toward the middle of the histogram and the reliability plots show a sigmoidal shape''~\cite{niculescu2005predicting}. The distortion grows as the label noise decreases: it is strongest on Covertype, where many examples have $\eta(x)$ close to $0$ or $1$ but the forest can output such values only when all trees agree, and weaker on HIGGS, where $\eta(x)$ is close to $0.5$ for most examples and the averaging matters less. On Adult, instead, fully grown trees produce unanimous predictions of exactly $0$ or $1$ for 23\% of the test examples, and a mild overconfidence prevails. The direction of the miscalibration of Random Forest is therefore not fixed, but depends on the noise of the problem.
+
+\paragraph{Calibration of Logistic Regression.}
+As expected from the log-odds argument of Section~\ref{sec:need}, Logistic Regression is well calibrated where the linear model fits the data (Adult). On HIGGS and Covertype, where the signal is non-linear, mispecification leaves small and irregular deviations from the diagonal, which the calibrators only partly remove. This agrees with the paper, where Logistic Regression is well calibrated and post-calibration brings little benefit~\cite{niculescu2005predicting}.
+
+\paragraph{Platt scaling versus isotonic regression.}
+Platt scaling is effective when the distortion is sigmoid-shaped, as for the under-confident forests of HIGGS and Covertype, but it fails on Adult, where Logistic Regression is already calibrated, Random Forest is only mildly overconfident and most predictions lie near $0$. Since the sigmoid is applied to the probability, its family does not contain the identity: to stay close to the diagonal in the middle, it must move the predictions near $0$ and $1$ toward the center, and to reach the tails it must become steeper than the diagonal elsewhere. This is the limit noted in the paper, where for well-calibrated models ``calibration with Platt Scaling actually moves probability mass away from 0 and 1'' and ``the sigmoid has difficulty fitting the predictions in the tails''~\cite{niculescu2005predicting}. Isotonic regression has no such constraint and corrects every distortion observed here, at the price of coarse histograms and of predictions of exactly $0$ or $1$, which log-loss penalizes heavily.
+
+\subsection{Effects of Calibration Set Size}\label{sec:calsize}
+
+Figure~\ref{fig:calsize} shows the test Brier score of the two calibrators as the calibration set grows from 32 to 8,000 examples. \textbf{Platt scaling} converges quickly: with only two parameters to estimate, its curve is almost flat after about 128 examples in all six cases. \textbf{Isotonic regression} needs much more data: with 32 examples it is worse than the uncalibrated model in every case, by up to $0.07$ (which is the case of Logistic Regression on Covertype), and it reaches its final level only with a few thousand examples. As a result, on HIGGS and Covertype Platt scaling outperforms isotonic regression on small calibration sets, in agreement with the threshold of about 200-1000 examples reported in the paper~\cite{niculescu2005predicting}, while isotonic regression catches up only with thousands of examples. On Adult, where the sigmoid is a poor fit, the two methods are comparable on small sets and isotonic regression is consistently better from about 2,000 examples on.
+
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=0.8\textwidth]{calibration_size.pdf}
+  \caption{Test Brier score of Platt scaling and isotonic regression against the size of the calibration set (log scale), for each dataset (rows) and model (columns); the dashed line is the uncalibrated model.}
+  \label{fig:calsize}
+\end{figure}
+
+Compared with the uncalibrated models, calibration pays off only where there is a distortion to correct. For the Random Forest on HIGGS and Covertype, Platt scaling improves on the uncalibrated model with as few as 32-64 examples, and isotonic regression with a few hundred. On Adult, instead, Platt scaling never reaches the uncalibrated Brier score of either model, because of the approximation error discussed above, and isotonic regression only matches it with the largest calibration sets. With small calibration sets both methods hurt the models that are already well calibrated, as the paper reports for neural networks, bagged trees and Logistic Regression~\cite{niculescu2005predicting}. Since all curves come from a single draw of the subsets, small irregularities, such as the non-monotone segments of isotonic regression on Adult, reflect sampling noise rather than a systematic effect.
+
+
+
+\section{Conclusions}
+This study evaluated the calibration of Logistic Regression and Random Forest on three datasets with different label noise, feature types and class balance, and the effect of two post-hoc calibration methods, Platt scaling and isotonic regression, implemented from scratch following the methodology of~\cite{niculescu2005predicting}.
+ 
+The experiments confirm the main findings of the paper. Logistic Regression, whose loss is minimized by the log-odds, produces well-calibrated probabilities where the linear model fits the data and only mildly miscalibrated ones elsewhere, so that calibration brings little or no benefit. Random Forest, instead, shows the sigmoid-shaped under-confidence caused by the averaging of high-variance trees, whose intensity depends on the label noise: it is strongest on the low-noise Covertype dataset, while on Adult the unanimous predictions of fully grown trees lead to a mild overconfidence. Since calibration acts on the probability values and not on their ranking, it leaves the accuracy unchanged and has a small effect on log-loss and Brier score compared with the differences between models, while ECE reveals it clearly.
+
+As in the paper, calibration also brings the two models to a similar calibration: Logistic Regression is the best-calibrated model before calibration, but afterwards Random Forest is equally well calibrated on HIGGS and Covertype, where its better separation of the classes makes it the best model, while Logistic Regression remains the best on Adult.
+ 
+The comparison between the two calibrators highlights a trade-off between flexibility and data requirements. Platt scaling needs only a few hundred calibration examples and corrects sigmoid-shaped distortions well, but, applied to probabilities, it cannot represent the identity and degrades well-calibrated models whose predictions lie close to $0$ and $1$. Isotonic regression corrects every monotone distortion encountered here, but it needs thousands of calibration examples and produces predictions of exactly $0$ or $1$ that log-loss penalizes heavily.
+
+This study has two main limitations. All results come from a single split of the data, so small differences between the metrics should not be overinterpreted. Moreover, it does not consider maximum-margin methods, such as SVMs and boosted trees, which according to the paper benefit most from post-hoc calibration, since they push their predictions away from $0$ and $1$ and produce exactly the sigmoid-shaped distortion that Platt scaling was designed to correct~\cite{niculescu2005predicting}; extending the analysis to them is a natural continuation of this work. Within these limits, the results show that post-hoc calibration is beneficial when the model has a systematic distortion and enough calibration data is available, and that the choice of the calibrator should depend on both.
 
 \bibliographystyle{plain}
 \bibliography{references}
+
+\textit{I declare that this material, which I now submit for assessment, is entirely my own work and has not been taken from the work of others, save and to the extent that such work has been cited and acknowledged within the text of my work. I understand that plagiarism, collusion, and copying are grave and serious offences in the university and accept the penalties that would be imposed should I engage in plagiarism, collusion or copying. This assignment, or any part of it, has not been previously submitted by me or any other person for assessment on this or any other course of study.}
+
 \end{document}
