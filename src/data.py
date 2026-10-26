@@ -17,10 +17,11 @@ CAL_SIZE = 0.2
 TEST_SIZE = 0.2
 SPLIT_NAMES = ["X_train", "X_cal", "X_test", "y_train", "y_cal", "y_test"]
 
-ADULT_NUM_COLS = ["age", "fnlwgt", "education-num", "capital-gain", "capital-loss",
-                  "hours-per-week"]
-ADULT_CAT_COLS = ["workclass", "education", "marital-status", "occupation",
-                  "relationship", "race", "sex", "native-country"]
+# numerical and categorical features of Adult
+ADULT_NUM_COLS = ["age", "fnlwgt", "education-num", "capital-gain", "capital-loss", "hours-per-week"]
+ADULT_CAT_COLS = ["workclass", "education", "marital-status", "occupation", "relationship", "race", "sex", "native-country"]
+
+# numerical features of Covertype, and prefixes of the one-hot columns of its two categorical variables
 COVTYPE_NUM_COLS = [
     "Elevation", "Aspect", "Slope",
     "Horizontal_Distance_To_Hydrology", "Vertical_Distance_To_Hydrology",
@@ -30,6 +31,11 @@ COVTYPE_NUM_COLS = [
 COVTYPE_CAT_COLS = ["Wilderness_Area", "Soil_Type"]
 
 def load_higgs():
+    """
+    Loads HIGGS. On the first call the dataset is downloaded from OpenML (id 23512) into a temporary folder and cached in data/higgs.csv.gz.
+    
+    Returns: the 28 features as a DataFrame and the labels as an integer array (1 = Higgs boson signal).
+    """
     path = DATA_DIR / "higgs.csv.gz"
     if not path.exists():
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
@@ -41,6 +47,11 @@ def load_higgs():
     return df.drop(columns="class"), df["class"].to_numpy(dtype=int)
 
 def load_covertype():
+    """
+    Loads Covertype. On the first call the dataset is downloaded with scikit-learn and cached in data/covertype.csv.gz..
+    
+    Returns: the 12 features as a DataFrame and the labels as an integer array (1 = Lodgepole Pine).
+    """
     path = DATA_DIR / "covertype.csv.gz"
     if not path.exists():
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
@@ -58,6 +69,11 @@ def load_covertype():
 
 
 def load_adult():
+    """
+    Loads Adult. On the first call the dataset is downloaded from the UCI repository (id 2) and cached in data/adult.csv.gz.
+    
+    Returns: the 6 numerical and 8 categorical features as a DataFrame and the labels as an integer array.
+    """
     path = DATA_DIR / "adult.csv.gz"
     if not path.exists():
         data = fetch_ucirepo(id=2).data
@@ -71,9 +87,14 @@ def load_adult():
     y = df["income"].str.rstrip(".").map({"<=50K": 0, ">50K": 1})
     return df[ADULT_NUM_COLS + ADULT_CAT_COLS], y.to_numpy(dtype=int)
 
-
+# loading function of each dataset, used by the notebooks
 DATASETS = {"higgs": load_higgs, "covertype": load_covertype, "adult": load_adult}
 def split_data(X, y, n_samples=N_SAMPLES, random_state=RANDOM_STATE):
+    """
+    Draws a stratified subsample of n_samples rows and splits it into a training, a calibration and a test set.
+    
+    Returns: X_train, X_cal, X_test, y_train, y_cal, y_test.
+    """
     X, _, y, _ = train_test_split(
             X, y, train_size=n_samples, stratify=y, random_state=random_state)
 
@@ -87,6 +108,11 @@ def split_data(X, y, n_samples=N_SAMPLES, random_state=RANDOM_STATE):
 
 
 def encode_and_scale(X_train, X_cal, X_test):
+    """
+    Standardizes the numerical features and one-hot encodes the categorical ones. Means, standard deviations and categories are learned on the training set only, to avoid data leakage.
+    
+    Returns: the three sets as float arrays, with the standardized numerical columns followed by the one-hot ones.
+    """
     num_cols = list(X_train.select_dtypes("number").columns)
     cat_cols = [c for c in X_train.columns if c not in num_cols]
     scaler = StandardScaler().fit(X_train[num_cols])
@@ -94,6 +120,11 @@ def encode_and_scale(X_train, X_cal, X_test):
         dummy_cols = pd.get_dummies(X_train[cat_cols], columns=cat_cols).columns
 
     def transform(X):
+        """
+        Applies the scaler and the one-hot encoding learned on the training set to X.
+        
+        Returns: the transformed features as a float array.
+        """
         num = scaler.transform(X[num_cols])
         if not cat_cols:
             return num
@@ -103,11 +134,19 @@ def encode_and_scale(X_train, X_cal, X_test):
     return transform(X_train), transform(X_cal), transform(X_test)
 
 def save_splits(name, X_train, X_cal, X_test, y_train, y_cal, y_test):
+    """
+    Saves the six arrays of a dataset in the compressed file data/<name>_splits.npz, under the names in SPLIT_NAMES.
+    """
     arrays = (X_train, X_cal, X_test, y_train, y_cal, y_test)
     np.savez_compressed(DATA_DIR / f"{name}_splits.npz", **dict(zip(SPLIT_NAMES, arrays)))
 
 
 def load_splits(name):
+    """
+    Reads the file data/<name>_splits.npz written by save_splits.
+    
+    Returns: the six arrays X_train, X_cal, X_test, y_train, y_cal, y_test.
+    """
     path = DATA_DIR / f"{name}_splits.npz"
     with np.load(path) as f:
         return tuple(f[k] for k in SPLIT_NAMES)

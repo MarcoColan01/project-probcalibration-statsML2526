@@ -4,6 +4,11 @@ from .metrics import bin_index, reliability_bins
 
 
 def prediction_histogram(ax, p, color, n_bins=10):
+    """
+    Counts the predicted probabilities p in n_bins equal-width bins, the same as in the reliability diagrams,
+    and draws the counts on ax as adjacent bars.
+    Returns: nothing, the histogram is drawn on ax.
+    """
     counts = np.bincount(bin_index(p, n_bins), minlength=n_bins)
     ax.bar(np.arange(n_bins) / n_bins, counts, width=1 / n_bins, align="edge",
            color=color, edgecolor="white", linewidth=0.8)
@@ -11,6 +16,9 @@ def prediction_histogram(ax, p, color, n_bins=10):
            ylabel="Count")
 
 def calibration_size_curve(ax, sizes, series, uncalibrated, uncalibrated_color, uncalibrated_label="Uncalibrated"):
+    """
+    Draws on ax a test metric against the size of the calibration set: a horizontal line at the value of the uncalibrated model and one curve for each (values, color, label) in series, on a logarithmic x axis with a labeled tick for each size.
+    """
     ax.axhline(uncalibrated, color=uncalibrated_color, linestyle="-", label=uncalibrated_label)
     for y, color, label in series:
         ax.plot(sizes, y, marker="o", markersize=3.5, color=color, label=label)
@@ -19,13 +27,18 @@ def calibration_size_curve(ax, sizes, series, uncalibrated, uncalibrated_color, 
     ax.minorticks_off()
     ax.tick_params(axis="x", labelrotation=45)
     
-def reliability_axes(ax, diagonal_label=None, xlabel="Mean predicted probability",
-                     ylabel="Fraction of positives"):
+def reliability_axes(ax, diagonal_label=None, xlabel="Mean predicted probability", ylabel="Fraction of positives"):
+    """
+    Prepares ax for a reliability diagram or a calibration map: draws the dashed diagonal of perfect calibration and sets the limits [0, 1], the ticks, a square box and the axis labels.
+    """
     ax.plot([0, 1], [0, 1], linestyle="--", color="grey", linewidth=1, label=diagonal_label)
     ticks = np.linspace(0, 1, 6)
     ax.set(xlim=(0, 1), ylim=(0, 1), xticks=ticks, yticks=ticks, box_aspect=1,
            xlabel=xlabel, ylabel=ylabel)
     
 def reliability_curve(ax, y, p, n_bins=10, **style):
+    """
+    Draws on ax the reliability curve of the probabilities p, i.e. the fraction of positives against the mean prediction of each non-empty bin.
+    """
     mean_pred, frac_pos, _ = reliability_bins(y, p, n_bins)
     ax.plot(mean_pred, frac_pos, **style)
