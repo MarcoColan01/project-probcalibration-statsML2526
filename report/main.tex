@@ -164,7 +164,7 @@ The pipeline is the same for every dataset and model: the model is trained on th
 \subsection{Trained Models and Hyperparameters Choice}\label{sec:models}
 Both models are used with the \textbf{default hyperparameters of scikit-learn}, without tuning, so that the same configuration is compared across the three datasets and the differences in calibration reflect the data rather than the hyperparameters. Tuning on a probabilistic criterion, such as the validation log-loss, would also mix the effect of model selection with that of the calibrators.
 \begin{itemize}
-  \item \textbf{Logistic Regression:} has been used with L2 penalty with $C=1$ and an unpenalized intercept, fitted with L-BFGS. The iteration limit is raised from 100 to 1000 so that the solver can reach the optimum; it converges in 17, 93 and 82 iterations on HIGGS, Covertype and Adult respectively.
+  \item \textbf{Logistic Regression:} has been used with L2 penalty with $C=1$ and an unpenalized intercept, fitted with L-BFGS. The iteration limit is raised from 100 to 500 so that the solver can reach the optimum; it converges in 17, 93 and 82 iterations on HIGGS, Covertype and Adult respectively.
   \item \textbf{Random Forest:} has been used with trees grown until their leaves are pure on bootstrap samples, with $\sqrt{d}$ candidate features per split and Gini impurity as splitting criterion. The number of trees is set to $T=101$ instead of the default 100: since every fully grown tree votes $0$ or $1$, the forest predicts multiples of $1/T$, and an odd $T$ avoids ties at $0.5$~\cite{cesabianchi2026notes}. Wherever all trees agree, the forest outputs exactly $0$ or $1$.
 \end{itemize}
 
